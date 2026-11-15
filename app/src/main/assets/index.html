@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Kipas Football</title>
+
+
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#1a1a17;color:#f2e9d0;font-family:system-ui,Arial,sans-serif;overflow:hidden}
+  body{display:flex;flex-direction:column;align-items:center}
+  header{padding:10px 0 6px;text-align:center}
+  header h1{font-size:20px;letter-spacing:3px;font-weight:800;color:#f2e9d0;text-transform:uppercase}
+  header small{display:block;font-size:11px;opacity:.6;letter-spacing:1px}
+  #stage{flex:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:0}
+  canvas{touch-action:none;border:4px solid #8a6d3b;border-radius:6px;background:#1b5e20;box-shadow:0 4px 18px rgba(0,0,0,.6)}
+  #ad{width:100%;max-width:468px;height:60px;margin:6px 0;display:flex;align-items:center;justify-content:center;
+      background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.25);font-size:12px;opacity:.9}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kipas Football</h1>
+  <small>TIRS AU BUT</small>
+</header>
+
+<div id="stage"><canvas id="c"></canvas></div>
+
+
+<script>
+const W = 360, H = 560;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+cv.width = W * 2; cv.height = H * 2;
+ctx.scale(2, 2);
+
+function fit() {
+  const s = Math.min((innerWidth - 16) / W, (innerHeight - 90) / H);
+  cv.style.width = (W * s) + 'px';
+  cv.style.height = (H * s) + 'px';
+}
+addEventListener('resize', fit); fit();
+
+const GL = 70, GR = 290, GT = 120, GB = 220;   // cadre du but
+const START = { x: 180, y: 470 };
+const TOTAL = 5;
+
+let best = 0;
+try { best = +localStorage.getItem('kipas_best') || 0; } catch (e) {}
+
+let state = 'aim', shots = 0, results = [];
+let keeper = { x: 180, y: 195, tx: 180, ty: 195 };
+let ball = { x: START.x, y: START.y, r: 13 };
+let flight = null, aim = null, msg = '', msgCol = '#fff', resT = 0, overT = 0;
+
+function goals() { return results.filter(r => r === 'goal').length; }
+
+function toCanvas(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (state === 'over') { if (overT > 0.6) restart(); return; }
+  if (state === 'aim') aim = toCanvas(e);
+});
+cv.addEventListener('pointermove', e => { if (state === 'aim' && aim) aim = toCanvas(e); });
+cv.addEventListener('pointerup', e => {
+  if (state !== 'aim' || !aim) return;
+  const p = toCanvas(e);
+  aim = null;
+  if (p.y > START.y - 60) return;            // il faut viser vers le haut
+  shoot(p);
+});
+
+function shoot(t) {
+  const ty = Math.max(t.y, 70);
+  flight = { sx: START.x, sy: START.y, tx: t.x, ty: ty, t: 0, dur: 0.55 };
+  keeper.tx = 180 + (Math.random() - 0.5) * 190;
+  keeper.ty = GT + 25 + Math.random() * (GB - GT - 45);
+  state = 'fly';
+}
+
+function resolve() {
+  const { tx, ty } = flight;
+  const inGoal = tx > GL + 3 && tx < GR - 3 && ty > GT + 3 && ty < GB;
+  if (!inGoal) { msg = 'RATÉ !'; msgCol = '#ff6b6b'; results.push('miss'); }
+  else if (Math.hypot(tx - keeper.tx, ty - keeper.ty) < 44) { msg = 'ARRÊT !'; msgCol = '#ffd54a'; results.push('save'); }
+  else { msg = 'BUT !'; msgCol = '#69f0ae'; results.push('goal'); }
+  state = 'result'; resT = 1.3;
+}
+
+function nextShot() {
+  shots++;
+  if (shots >= TOTAL) {
+    state = 'over'; overT = 0;
+    try { if (window.Android) Android.onGameOver(); } catch (e) {}
+    if (goals() > best) {
+      best = goals();
+      try { localStorage.setItem('kipas_best', best); } catch (e) {}
+    }
+    return;
+  }
+  ball = { x: START.x, y: START.y, r: 13 };
+  keeper = { x: 180, y: 195, tx: 180, ty: 195 };
+  flight = null; msg = ''; state = 'aim';
+}
+
+function restart() {
+  shots = 0; results = []; msg = '';
+  ball = { x: START.x, y: START.y, r: 13 };
+  keeper = { x: 180, y: 195, tx: 180, ty: 195 };
+  flight = null; state = 'aim';
+}
+
+const ease = p => 1 - Math.pow(1 - p, 3);
+
+function update(dt) {
+  if (state === 'fly') {
+    flight.t += dt / flight.dur;
+    const p = Math.min(flight.t, 1);
+    ball.x = flight.sx + (flight.tx - flight.sx) * p;
+    ball.y = flight.sy + (flight.ty - flight.sy) * p - Math.sin(Math.PI * p) * 25;
+    ball.r = 13 - 6 * p;
+    const k = ease(Math.min(1, flight.t * 1.2));
+    keeper.x = 180 + (keeper.tx - 180) * k;
+    keeper.y = 195 + (keeper.ty - 195) * k;
+    if (flight.t >= 1) resolve();
+  } else if (state === 'result') {
+    resT -= dt;
+    if (resT <= 0) nextShot();
+  } else if (state === 'over') {
+    overT += dt;
+  }
+}
+
+/* ---------- Dessin ---------- */
+function drawPitch() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#1b5e20'); g.addColorStop(1, '#2e7d32');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 10; i++) {
+    if (i % 2) { ctx.fillStyle = 'rgba(255,255,255,.04)'; ctx.fillRect(0, i * 56, W, 56); }
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, GB); ctx.lineTo(W, GB); ctx.stroke();
+  ctx.strokeRect(40, GB, 280, 200);
+  ctx.beginPath(); ctx.arc(START.x, START.y, 70, Math.PI * 1.2, Math.PI * 1.8); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.8)';
+  ctx.beginPath(); ctx.arc(START.x, START.y, 3, 0, 7); ctx.fill();
+}
+
+function drawGoal() {
+  ctx.fillStyle = 'rgba(255,255,255,.08)';
+  ctx.fillRect(GL, GT, GR - GL, GB - GT);
+  ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1;
+  for (let x = GL; x <= GR; x += 12) { ctx.beginPath(); ctx.moveTo(x, GT); ctx.lineTo(x, GB); ctx.stroke(); }
+  for (let y = GT; y <= GB; y += 12) { ctx.beginPath(); ctx.moveTo(GL, y); ctx.lineTo(GR, y); ctx.stroke(); }
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 5; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(GL, GB); ctx.lineTo(GL, GT); ctx.lineTo(GR, GT); ctx.lineTo(GR, GB); ctx.stroke();
+}
+
+function drawKeeper() {
+  const lean = (keeper.x - 180) / 110 * 0.8;
+  ctx.save();
+  ctx.translate(keeper.x, keeper.y); ctx.rotate(lean);
+  ctx.fillStyle = '#ffd54a'; ctx.fillRect(-14, -18, 28, 38);          // maillot
+  ctx.fillStyle = '#222'; ctx.fillRect(-14, 20, 28, 12);              // short
+  ctx.fillStyle = '#e0ac84'; ctx.beginPath(); ctx.arc(0, -28, 9, 0, 7); ctx.fill(); // tête
+  ctx.strokeStyle = '#ffd54a'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-14, -12); ctx.lineTo(-30, -26); ctx.moveTo(14, -12); ctx.lineTo(30, -26); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-31, -28, 5, 0, 7); ctx.arc(31, -28, 5, 0, 7); ctx.fill(); // gants
+  ctx.restore();
+}
+
+function drawBall(x, y, r) {
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  ctx.beginPath(); ctx.ellipse(x, y + r + 2, r, r * 0.35, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#222'; ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / 5;
+    const px = x + Math.cos(a) * r * 0.45, py = y + Math.sin(a) * r * 0.45;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  }
+  ctx.fill();
+}
+
+function drawAim() {
+  if (!(state === 'aim' && aim)) return;
+  ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(START.x, START.y); ctx.lineTo(aim.x, aim.y); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(aim.x, aim.y, 10, 0, 7); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(aim.x - 14, aim.y); ctx.lineTo(aim.x + 14, aim.y);
+  ctx.moveTo(aim.x, aim.y - 14); ctx.lineTo(aim.x, aim.y + 14); ctx.stroke();
+}
+
+function drawText(t, x, y, size, col) {
+  ctx.font = '800 ' + size + 'px system-ui,Arial'; ctx.textAlign = 'center';
+  ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.strokeText(t, x, y);
+  ctx.fillStyle = col; ctx.fillText(t, x, y);
+}
+
+function drawHUD() {
+  drawText('Buts : ' + goals(), 60, 34, 18, '#fff');
+  for (let i = 0; i < TOTAL; i++) {
+    const r = results[i];
+    ctx.fillStyle = r === 'goal' ? '#69f0ae' : r === 'save' ? '#ffd54a' : r === 'miss' ? '#ff6b6b' : 'rgba(255,255,255,.3)';
+    ctx.beginPath(); ctx.arc(215 + i * 26, 28, 9, 0, 7); ctx.fill();
+  }
+  drawText('Record : ' + best, W - 52, 66, 13, '#f2e9d0');
+}
+
+function draw() {
+  drawPitch(); drawGoal(); drawKeeper(); drawHUD();
+  drawBall(ball.x, ball.y, ball.r);
+  drawAim();
+  if (state === 'aim' && !aim && shots === 0 && results.length === 0)
+    drawText('Touche / glisse vers le but pour tirer', W / 2, 530, 14, '#fff');
+  if (state === 'result') drawText(msg, W / 2, 330, 46, msgCol);
+  if (state === 'over') {
+    ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.fillRect(0, 0, W, H);
+    drawText('FIN DU MATCH', W / 2, 210, 32, '#f2e9d0');
+    drawText(goals() + ' / ' + TOTAL + ' buts', W / 2, 275, 44, goals() >= 4 ? '#69f0ae' : '#fff');
+    drawText('Record : ' + best, W / 2, 315, 18, '#ffd54a');
+    if (overT > 0.6) drawText('Touche pour rejouer', W / 2, 390, 18, '#fff');
+  }
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.05); last = now;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
